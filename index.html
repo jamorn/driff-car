@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>Two Cars - Car2 Smooth Cornering + Drift (No HUD)</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', 'Inter', system-ui, -apple-system, sans-serif;
+            touch-action: pan-x pan-y;
+        }
+        .developer-info {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            background: rgba(0,0,0,0.6);
+            color: #fff;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 11px;
+            pointer-events: none;
+            z-index: 10;
+            backdrop-filter: blur(4px);
+            white-space: nowrap;
+        }
+        .pause-btn {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.7);
+            color: #ffaa66;
+            border: 1px solid #ffaa66;
+            padding: 8px 16px;
+            border-radius: 40px;
+            font-family: monospace;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            z-index: 20;
+            backdrop-filter: blur(4px);
+            transition: 0.2s;
+            pointer-events: auto;
+            touch-action: manipulation;
+        }
+        .pause-btn:hover {
+            background: #ffaa66;
+            color: #1e1e2a;
+            border-color: #fff;
+        }
+        @media (max-width: 600px) {
+            .developer-info { font-size: 9px; top: 8px; left: 8px; padding: 4px 8px; }
+            .pause-btn { padding: 6px 12px; font-size: 12px; bottom: 12px; right: 12px; }
+        }
+        .controls-note {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.5);
+            color: #ccc;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 10px;
+            font-family: monospace;
+            pointer-events: none;
+            white-space: nowrap;
+        }
+        @media (max-width: 600px) {
+            .controls-note { font-size: 8px; bottom: 8px; }
+        }
+    </style>
+</head>
+<body>
+<div class="developer-info">
+    👨‍💻 Developer: likit_se@irc.co.th
+</div>
+<button id="pauseToggleBtn" class="pause-btn">⏸️ Pause</button>
+<div class="controls-note">
+    🖱️ Drag / touch to rotate | Scroll / pinch to zoom | GUI: top-right
+</div>
+
+<script type="importmap">
+{
+    "imports": {
+        "three": "https://unpkg.com/three@0.128.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.128.0/examples/jsm/"
+    }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.js';
+
+// ==================== UTILITIES ====================
+function createHeadlightMaterial(baseColor = 0xffaa66) {
+    return new THREE.MeshStandardMaterial({ color: baseColor, emissive: baseColor, emissiveIntensity: 0.9 });
+}
+
+// ==================== WHEEL WITH CAKE SLICE PATTERN ====================
+function createPatternedWheel(color1 = 0x222222, color2 = 0xeeeeee, radius = 0.32, width = 0.45) {
+    const group = new THREE.Group();
+    const segments = 16;
+    
+    const rimMat = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.7, roughness: 0.3 });
+    const rim = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, width, 32), rimMat);
+    rim.rotation.z = Math.PI / 2;
+    group.add(rim);
+    
+    const sliceMatWhite = new THREE.MeshStandardMaterial({ color: color2, metalness: 0.2, roughness: 0.5 });
+    const sliceMatBlack = new THREE.MeshStandardMaterial({ color: color1, metalness: 0.4, roughness: 0.4 });
+    
+    for (let i = 0; i < segments; i++) {
+        const angle = (i / segments) * Math.PI * 2;
+        const isWhite = i % 2 === 0;
+        const sliceMat = isWhite ? sliceMatWhite : sliceMatBlack;
+        
+        const sliceWidth = 0.08;
+        const sliceLength = 0.22;
+        const slice = new THREE.Mesh(new THREE.BoxGeometry(sliceWidth, sliceLength, 0.08), sliceMat);
+        const distFromCenter = radius - 0.05;
+        slice.position.x = Math.cos(angle) * distFromCenter;
+        slice.position.z = Math.sin(angle) * distFromCenter;
+        slice.position.y = 0;
+        group.add(slice);
+        
+        const innerSlice = new THREE.Mesh(new THREE.BoxGeometry(sliceWidth * 0.7, sliceLength * 0.6, 0.08), sliceMat);
+        innerSlice.position.x = Math.cos(angle) * (distFromCenter - 0.1);
+        innerSlice.position.z = Math.sin(angle) * (distFromCenter - 0.1);
+        innerSlice.position.y = 0;
+        group.add(innerSlice);
+    }
+    
+    const capMat = new THREE.MeshStandardMaterial({ color: 0xccccaa, metalness: 0.8 });
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.05, 12), capMat);
+    cap.rotation.z = Math.PI / 2;
+    group.add(cap);
+    
+    return group;
+}
+
+// ==================== STREET LAMP CLASS ====================
+class StreetLamp {
+    constructor(x, z, color = 0xffaa66, intensity = 0.45) {
+        this.x = x;
+        this.z = z;
+        this.color = color;
+        this.intensity = intensity;
+        this.isOn = true;
+        this.group = new THREE.Group();
+        this.pointLight = null;
+        this.lampHead = null;
+        this._build();
+    }
+    
+    _build() {
+        const poleMat = new THREE.MeshStandardMaterial({ color: 0x886644, metalness: 0.3, roughness: 0.6 });
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.2, 2.5, 6), poleMat);
+        pole.position.y = 1.2;
+        pole.castShadow = true;
+        this.group.add(pole);
+        
+        const lampMat = new THREE.MeshStandardMaterial({ color: this.color, emissive: this.color, emissiveIntensity: 0.3 });
+        this.lampHead = new THREE.Mesh(new THREE.SphereGeometry(0.25, 16, 16), lampMat);
+        this.lampHead.position.y = 2.45;
+        this.lampHead.castShadow = true;
+        this.group.add(this.lampHead);
+        
+        this.pointLight = new THREE.PointLight(this.color, this.intensity);
+        this.pointLight.position.set(0, 1.8, 0);
+        this.pointLight.distance = 15;
+        this.pointLight.decay = 1.2;
+        this.group.add(this.pointLight);
+        
+        this.group.position.set(this.x, -0.2, this.z);
+    }
+    
+    addToScene(scene) { scene.add(this.group); }
+    setColor(colorHex) {
+        this.color = colorHex;
+        if (this.lampHead) {
+            this.lampHead.material.color.setHex(colorHex);
+            this.lampHead.material.emissive.setHex(colorHex);
+        }
+        if (this.pointLight && this.isOn) this.pointLight.color.setHex(colorHex);
+    }
+    setIntensity(intensity) {
+        this.intensity = intensity;
+        if (this.pointLight && this.isOn) this.pointLight.intensity = intensity;
+    }
+    setOn(on) {
+        this.isOn = on;
+        if (this.pointLight) this.pointLight.intensity = on ? this.intensity : 0;
+        if (this.lampHead) this.lampHead.material.emissiveIntensity = on ? 0.3 : 0;
+    }
+    getPosition() { return new THREE.Vector2(this.x, this.z); }
+}
+
+// ==================== CAR CLASS ====================
+class Car {
+    constructor(color, position, name = "Car") {
+        this.color = color;
+        this.name = name;
+        this.group = new THREE.Group();
+        this.position = position.clone();
+        this.group.position.copy(position);
+        this.group.castShadow = true;
+        this.wheels = [];
+        
+        this.leftSpot = new THREE.SpotLight(0xffaa66);
+        this.rightSpot = new THREE.SpotLight(0xffaa66);
+        this.fillLight = new THREE.PointLight(0xff8844, 0.6);
+        this.glowLeft = new THREE.PointLight(0xff8844, 0.4);
+        this.glowRight = new THREE.PointLight(0xff8844, 0.4);
+        
+        this.leftTarget = new THREE.Object3D();
+        this.rightTarget = new THREE.Object3D();
+        this.fillTarget = new THREE.Object3D();
+        
+        this.leftHeadLens = null;
+        this.rightHeadLens = null;
+        
+        this._buildModel();
+        this._setupLights();
+    }
+    
+    _buildModel() {
+        const bodyMat = new THREE.MeshStandardMaterial({ color: this.color, roughness: 0.25, metalness: 0.7 });
+        const body = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.45, 2.2), bodyMat);
+        body.position.y = 0.15;
+        body.castShadow = true;
+        this.group.add(body);
+        
+        const roofMat = new THREE.MeshStandardMaterial({ color: 0x2c3e66, metalness: 0.8, roughness: 0.2 });
+        const roof = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.32, 1.3), roofMat);
+        roof.position.y = 0.45;
+        this.group.add(roof);
+        
+        const glassMat = new THREE.MeshStandardMaterial({ color: 0x88aacc, metalness: 0.9, roughness: 0.1 });
+        const windshield = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.2, 0.6), glassMat);
+        windshield.position.set(0, 0.48, -0.7);
+        this.group.add(windshield);
+        
+        const wheelPos = [
+            { x: -0.65, z: -0.85 }, { x: 0.65, z: -0.85 },
+            { x: -0.65, z: 0.85 }, { x: 0.65, z: 0.85 }
+        ];
+        wheelPos.forEach(pos => {
+            const wheelGroup = createPatternedWheel(0x222222, 0xeeeeee, 0.32, 0.45);
+            wheelGroup.position.set(pos.x, 0.12, pos.z);
+            wheelGroup.castShadow = true;
+            this.group.add(wheelGroup);
+            this.wheels.push(wheelGroup);
+        });
+        
+        const lensMat = createHeadlightMaterial(0xffaa66);
+        this.leftHeadLens = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 16), lensMat);
+        this.leftHeadLens.position.set(-0.45, 0.18, 1.15);
+        this.rightHeadLens = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 16), lensMat);
+        this.rightHeadLens.position.set(0.45, 0.18, 1.15);
+        this.group.add(this.leftHeadLens, this.rightHeadLens);
+    }
+    
+    _setupLights() {
+        [this.leftSpot, this.rightSpot].forEach(s => {
+            s.castShadow = true;
+            s.shadow.mapSize.width = 1024;
+            s.shadow.mapSize.height = 1024;
+            s.angle = 0.65;
+            s.penumbra = 0.45;
+            s.distance = 12;
+            s.decay = 1.2;
+        });
+        this.group.add(this.leftSpot, this.rightSpot, this.fillLight, this.glowLeft, this.glowRight);
+        this.leftSpot.position.set(-0.55, 0.28, 1.25);
+        this.rightSpot.position.set(0.55, 0.28, 1.25);
+        this.fillLight.position.set(0, 0.25, 1.35);
+        this.glowLeft.position.set(-0.55, 0.2, 1.2);
+        this.glowRight.position.set(0.55, 0.2, 1.2);
+        this.leftSpot.target = this.leftTarget;
+        this.rightSpot.target = this.rightTarget;
+        this.fillLight.target = this.fillTarget;
+    }
+    
+    addToScene(scene) {
+        scene.add(this.group);
+        scene.add(this.leftTarget, this.rightTarget, this.fillTarget);
+    }
+    
+    setPosition(x, z) {
+        this.position.set(x, -0.1, z);
+        this.group.position.copy(this.position);
+    }
+    
+    setRotation(angleY) { this.group.rotation.y = angleY; }
+    setExtraTilt(angleZ) { this.group.rotation.z = angleZ; }
+    
+    lookAt(point) {
+        const dx = point.x - this.group.position.x;
+        const dz = point.z - this.group.position.z;
+        this.group.rotation.y = Math.atan2(dx, dz);
+    }
+    
+    // Smooth rotation with given speed (radians per second)
+    smoothLookAt(point, deltaTime, rotationSpeed = 5.0) {
+        const dx = point.x - this.group.position.x;
+        const dz = point.z - this.group.position.z;
+        const targetAngle = Math.atan2(dx, dz);
+        let currentAngle = this.group.rotation.y;
+        let diff = targetAngle - currentAngle;
+        diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+        this.group.rotation.y += diff * rotationSpeed * deltaTime;
+    }
+    
+    faceCenter() {
+        const dx = 0 - this.group.position.x;
+        const dz = 0 - this.group.position.z;
+        this.group.rotation.y = Math.atan2(dx, dz);
+    }
+    
+    updateWheelRotation(speed, deltaTime) {
+        const rotationAmount = speed * deltaTime * 8;
+        this.wheels.forEach(wheel => { wheel.rotation.x += rotationAmount; });
+    }
+    
+    updateHeadlightTarget(targetPoint) {
+        this.leftTarget.position.copy(targetPoint);
+        this.rightTarget.position.copy(targetPoint);
+        this.fillTarget.position.copy(targetPoint);
+    }
+    
+    setHeadlightIntensity(intensity) {
+        this.leftSpot.intensity = intensity;
+        this.rightSpot.intensity = intensity;
+        this.fillLight.intensity = intensity * 0.7;
+        this.glowLeft.intensity = intensity * 0.5;
+        this.glowRight.intensity = intensity * 0.5;
+    }
+    
+    setHeadlightColor(color) {
+        this.leftSpot.color.set(color);
+        this.rightSpot.color.set(color);
+        this.fillLight.color.set(color);
+        this.glowLeft.color.set(color);
+        this.glowRight.color.set(color);
+        if (this.leftHeadLens) {
+            this.leftHeadLens.material.color.set(color);
+            this.leftHeadLens.material.emissive.set(color);
+            this.rightHeadLens.material.color.set(color);
+            this.rightHeadLens.material.emissive.set(color);
+        }
+    }
+    
+    setHeadlightConeAngle(deg) {
+        const rad = deg * Math.PI / 180;
+        this.leftSpot.angle = rad;
+        this.rightSpot.angle = rad;
+    }
+    
+    getPosition() { return this.group.position; }
+}
+
+// ==================== OBSTACLE CLASS ====================
+class Obstacle {
+    constructor() {
+        this.group = new THREE.Group();
+        this._build();
+    }
+    _build() {
+        const core = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.2, 0.9), 
+            new THREE.MeshStandardMaterial({ color: 0xcc3333, roughness: 0.2, metalness: 0.1, emissive: 0x441111, emissiveIntensity: 0.5 }));
+        core.castShadow = true;
+        this.group.add(core);
+        for (let i = 0; i < 8; i++) {
+            const spike = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.45, 6), 
+                new THREE.MeshStandardMaterial({ color: 0xff5555, emissive: 0x331100 }));
+            const angle = (i / 8) * Math.PI * 2;
+            spike.position.set(Math.cos(angle) * 0.65, 0.5 + Math.sin(angle * 2) * 0.1, Math.sin(angle) * 0.65);
+            spike.rotation.x = angle;
+            this.group.add(spike);
+        }
+        const topLight = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8), 
+            new THREE.MeshStandardMaterial({ color: 0xff6666, emissive: 0xff2200, emissiveIntensity: 0.7 }));
+        topLight.position.y = 0.85;
+        this.group.add(topLight);
+        this.group.position.set(0, -0.1, 0);
+        this.group.castShadow = true;
+    }
+    addToScene(scene) { scene.add(this.group); }
+    getPosition() { return new THREE.Vector3(0, 0, 0); }
+}
+
+// ==================== DRIFT PATROL (Smooth cornering with early turn) ====================
+class DriftPatrolSmooth {
+    constructor(car, waypoints, loop = true) {
+        this.car = car;
+        this.waypoints = waypoints; // array of {x, z}
+        this.currentIndex = 0;
+        this.loop = loop;
+        this.speed = 11.0;          // base speed (max 20)
+        this.enabled = true;
+        this.rotationSpeed = 4.2;   // how fast it rotates (radians per sec)
+        this.driftIntensity = 0;
+        this.driftDecay = 0.95;
+        this.driftTimer = 0;
+        this.driftDuration = 0.35;
+        
+        // Pre-calc next waypoint index
+        this.nextIndex = (this.currentIndex + 1) % this.waypoints.length;
+        
+        // Turning threshold: start turning when distance to current waypoint less than this (meters)
+        this.turnThreshold = 1.8;
+    }
+    
+    setSpeed(speed) { this.speed = Math.min(20, Math.max(1, speed)); }
+    
+    update(deltaTime) {
+        if (!this.enabled) return;
+        if (this.waypoints.length === 0) return;
+        
+        const target = this.waypoints[this.currentIndex];
+        const nextTarget = this.waypoints[this.nextIndex];
+        const pos = this.car.getPosition();
+        const dx = target.x - pos.x;
+        const dz = target.z - pos.z;
+        const distanceToCurrent = Math.hypot(dx, dz);
+        
+        // Movement towards current waypoint
+        const moveDistance = this.speed * deltaTime;
+        if (distanceToCurrent < 0.25) {
+            // Reached current waypoint -> switch to next
+            this.currentIndex = this.nextIndex;
+            this.nextIndex = (this.currentIndex + 1) % this.waypoints.length;
+            // Reset drift timer for corner exit
+            this.driftTimer = 0;
+            this.driftIntensity *= 0.8;
+        } else {
+            const step = Math.min(1.0, moveDistance / distanceToCurrent);
+            const newX = pos.x + dx * step;
+            const newZ = pos.z + dz * step;
+            this.car.setPosition(newX, newZ);
+        }
+        
+        // Steering logic: if close to corner, aim for next waypoint, else aim for current
+        let targetAnglePoint;
+        let isTurning = false;
+        if (distanceToCurrent < this.turnThreshold) {
+            // Start turning towards next waypoint before reaching the corner
+            targetAnglePoint = new THREE.Vector3(nextTarget.x, 0, nextTarget.z);
+            isTurning = true;
+            // Activate drift effect
+            if (this.driftTimer <= 0) {
+                this.driftIntensity = 0.65;
+                this.driftTimer = this.driftDuration;
+            }
+        } else {
+            targetAnglePoint = new THREE.Vector3(target.x, 0, target.z);
+        }
+        
+        // Smooth rotation
+        this.car.smoothLookAt(targetAnglePoint, deltaTime, this.rotationSpeed);
+        
+        // Drift tilt effect (body roll)
+        if (this.driftTimer > 0) {
+            const tilt = Math.sin(this.driftTimer * 18) * 0.13;
+            this.car.group.rotation.z = tilt * this.driftIntensity;
+            this.driftTimer -= deltaTime;
+        } else {
+            this.car.group.rotation.z *= 0.95;
+            if (Math.abs(this.car.group.rotation.z) < 0.005) this.car.group.rotation.z = 0;
+            this.driftIntensity *= this.driftDecay;
+        }
+        
+        // Wheel rotation
+        this.car.updateWheelRotation(this.speed, deltaTime);
+    }
+    
+    resetToNearest() {
+        let bestIdx = 0, bestDist = Infinity;
+        const pos = this.car.getPosition();
+        this.waypoints.forEach((wp, idx) => {
+            const dist = Math.hypot(wp.x - pos.x, wp.z - pos.z);
+            if (dist < bestDist) { bestDist = dist; bestIdx = idx; }
+        });
+        this.currentIndex = bestIdx;
+        this.nextIndex = (this.currentIndex + 1) % this.waypoints.length;
+        // Immediately set initial direction
+        const target = this.waypoints[this.currentIndex];
+        this.car.lookAt(new THREE.Vector3(target.x, 0, target.z));
+    }
+}
+
+// ==================== SCENE MANAGER ====================
+class SceneManager {
+    constructor() {
+        this.scene = null;
+        this.camera = null;
+        this.renderer = null;
+        this.composer = null;
+        this.controls = null;
+        this.obstacle = null;
+        this.car1 = null;
+        this.car2 = null;
+        this.lamps = [];
+        this.patrolManager2 = null;
+        this.glowParticles = [];
+        this.stars = null;
+        this.lastTime = performance.now();
+        
+        this.radius1 = 4.0;
+        this.waypoints1 = [
+            { x: -this.radius1, z: -this.radius1 },
+            { x: -this.radius1, z: this.radius1 },
+            { x: this.radius1, z: this.radius1 },
+            { x: this.radius1, z: -this.radius1 }
+        ];
+        this.currentWaypointIndex1 = 0;
+        this.car1Speed = 5.5;
+        this.car1Enabled = true;
+        this.car2Enabled = true;
+        
+        this.params = {
+            car1LightMode: 'default',
+            car1CustomAngle: 0,
+            car1LightColor: '#ffaa66',
+            car1IntensityMult: 1.0,
+            car1ConeDeg: 40,
+            car1Speed: 5.5,
+            car1Radius: 4.0,
+            car2LightColor: '#ff8866',
+            car2Speed: 11.0,
+            car2RotationSpeed: 4.2,
+            masterLampColor: '#ffaa66',
+            masterLampIntensity: 0.45,
+            allLampsOn: () => this.lamps.forEach(l => l.setOn(true)),
+            allLampsOff: () => this.lamps.forEach(l => l.setOn(false)),
+            resetCar1: () => this._resetCar1Position()
+        };
+        
+        this._init();
+        this._setupGUI();
+        this._setupPauseButton();
+        this._animate();
+    }
+    
+    _resetCar1Position() {
+        this.car1.setPosition(-this.radius1, -this.radius1);
+        this.currentWaypointIndex1 = 0;
+    }
+    
+    _init() {
+        this.scene = new THREE.Scene();
+        this.scene.background = new THREE.Color(0x050b1a);
+        this.scene.fog = new THREE.FogExp2(0x050b1a, 0.008);
+        
+        this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        this.camera.position.set(13, 9, 15);
+        this.camera.lookAt(0, 0.5, 0);
+        
+        this.renderer = new THREE.WebGLRenderer({ antialias: true });
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.setPixelRatio(window.devicePixelRatio);
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        this.renderer.toneMapping = THREE.ReinhardToneMapping;
+        this.renderer.toneMappingExposure = 1.2;
+        document.body.appendChild(this.renderer.domElement);
+        
+        const renderPass = new RenderPass(this.scene, this.camera);
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.2, 0.3, 0.85);
+        bloomPass.threshold = 0.2; bloomPass.strength = 0.9; bloomPass.radius = 0.5;
+        this.composer = new EffectComposer(this.renderer);
+        this.composer.addPass(renderPass); this.composer.addPass(bloomPass);
+        
+        this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+        this.controls.enableDamping = true; this.controls.dampingFactor = 0.05; this.controls.target.set(0,0.8,0);
+        
+        const ground = new THREE.Mesh(new THREE.PlaneGeometry(32, 32), new THREE.MeshStandardMaterial({ color: 0x111822, roughness: 0.7 }));
+        ground.rotation.x = -Math.PI/2; ground.position.y = -0.25; ground.receiveShadow = true; this.scene.add(ground);
+        const grid = new THREE.GridHelper(36, 36, 0x88aaff, 0x335588); grid.position.y = -0.2; grid.material.transparent = true; grid.material.opacity = 0.45; this.scene.add(grid);
+        
+        const ambient = new THREE.AmbientLight(0x22223b, 0.45); this.scene.add(ambient);
+        const backFill = new THREE.PointLight(0x4466aa, 0.5); backFill.position.set(-2, 3, -5); this.scene.add(backFill);
+        
+        this.obstacle = new Obstacle(); this.obstacle.addToScene(this.scene);
+        
+        const pgeo = new THREE.SphereGeometry(0.05, 4, 4);
+        for (let i = 0; i < 24; i++) {
+            const pm = new THREE.MeshStandardMaterial({ color: 0xff4433, emissive: 0xff2200, emissiveIntensity: 0.4 });
+            const p = new THREE.Mesh(pgeo, pm);
+            p.userData = { offset: Math.random() * Math.PI * 2 };
+            this.obstacle.group.add(p);
+            this.glowParticles.push(p);
+        }
+        
+        const lampPositions = [
+            { x: -7.5, z: -6.0 }, { x: -7.5, z: 0 }, { x: -7.5, z: 6.0 },
+            { x: 7.5, z: -6.0 }, { x: 7.5, z: 0 }, { x: 7.5, z: 6.0 }
+        ];
+        lampPositions.forEach(pos => {
+            const lamp = new StreetLamp(pos.x, pos.z, 0xffaa66, 0.45);
+            lamp.addToScene(this.scene);
+            this.lamps.push(lamp);
+        });
+        
+        const starGeo = new THREE.BufferGeometry();
+        const starPos = new Float32Array(800 * 3);
+        for (let i = 0; i < 800; i++) {
+            starPos[i*3] = (Math.random() - 0.5) * 200;
+            starPos[i*3+1] = (Math.random() - 0.5) * 50 + 8;
+            starPos[i*3+2] = (Math.random() - 0.5) * 100 - 50;
+        }
+        starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+        this.stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.08, transparent: true, opacity: 0.6 }));
+        this.scene.add(this.stars);
+        
+        this.car1 = new Car(0x3a6ea5, new THREE.Vector3(-this.radius1, -0.1, -this.radius1), "Blue Car");
+        this.car1.addToScene(this.scene);
+        
+        this.car2 = new Car(0xcc5555, new THREE.Vector3(-9.8, -0.1, -8.2), "Red Car");
+        this.car2.addToScene(this.scene);
+        this.car2.setHeadlightColor(0xff8866);
+        
+        const waypoints2 = [
+            { x: -9.8, z: -8.2 }, { x: -9.8, z: 8.2 },
+            { x: 9.8, z: 8.2 }, { x: 9.8, z: -8.2 }
+        ];
+        this.patrolManager2 = new DriftPatrolSmooth(this.car2, waypoints2, true);
+        this.patrolManager2.setSpeed(11.0);
+        this.patrolManager2.enabled = true;
+        
+        this._addPathMarkers(this.waypoints1, 0x3a6ea5, 0.15);
+        this._addPathMarkers(waypoints2, 0xcc5555, 0.12);
+        
+        this._updateCar1Lighting();
+        this._updateCar1LightTarget();
+    }
+    
+    _addPathMarkers(waypoints, color, size) {
+        const markerMat = new THREE.MeshStandardMaterial({ color: color, emissive: color, emissiveIntensity: 0.4 });
+        waypoints.forEach(wp => {
+            const marker = new THREE.Mesh(new THREE.SphereGeometry(size, 12, 12), markerMat);
+            marker.position.set(wp.x, 0.08, wp.z);
+            this.scene.add(marker);
+        });
+        const points = waypoints.map(wp => new THREE.Vector3(wp.x, 0.05, wp.z));
+        points.push(points[0]);
+        const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
+        const lineMat = new THREE.LineBasicMaterial({ color: color });
+        const pathLine = new THREE.Line(lineGeo, lineMat);
+        this.scene.add(pathLine);
+    }
+    
+    _updateCar1Movement(deltaTime) {
+        if (!this.car1Enabled) return;
+        const target = this.waypoints1[this.currentWaypointIndex1];
+        const pos = this.car1.getPosition();
+        const dx = target.x - pos.x, dz = target.z - pos.z;
+        const distance = Math.hypot(dx, dz);
+        const moveDistance = this.car1Speed * deltaTime;
+        if (distance < 0.2) this.currentWaypointIndex1 = (this.currentWaypointIndex1 + 1) % this.waypoints1.length;
+        else {
+            const step = Math.min(1.0, moveDistance / distance);
+            this.car1.setPosition(pos.x + dx * step, pos.z + dz * step);
+        }
+        this.car1.faceCenter();
+        this.car1.updateWheelRotation(this.car1Speed, deltaTime);
+    }
+    
+    _updateCar1Lighting() {
+        const c = new THREE.Color(this.params.car1LightColor);
+        this.car1.setHeadlightColor(c);
+        this.car1.setHeadlightConeAngle(this.params.car1ConeDeg);
+        const distance = this.car1.getPosition().distanceTo(this.obstacle.getPosition());
+        let distanceFactor = 1.0;
+        if (distance < 2.0) {
+            distanceFactor = Math.max(0, distance / 2.0);
+            if (distance < 0.2) distanceFactor = 0.05;
+        }
+        let intensity = 0.95 * distanceFactor;
+        if (this.params.car1LightMode === 'custom') intensity *= this.params.car1IntensityMult;
+        this.car1.setHeadlightIntensity(intensity);
+        const headEmit = 0.5 + distanceFactor * 0.8;
+        if (this.car1.leftHeadLens) {
+            this.car1.leftHeadLens.material.emissiveIntensity = headEmit;
+            this.car1.rightHeadLens.material.emissiveIntensity = headEmit;
+        }
+    }
+    
+    _updateCar1LightTarget() {
+        if (this.params.car1LightMode === 'default') this.car1.updateHeadlightTarget(this.obstacle.getPosition());
+        else if (this.params.car1LightMode === 'straight') {
+            const forwardDir = new THREE.Vector3(Math.sin(this.car1.group.rotation.y), 0, Math.cos(this.car1.group.rotation.y));
+            this.car1.updateHeadlightTarget(new THREE.Vector3(this.car1.getPosition().x + forwardDir.x * 15, 0.28, this.car1.getPosition().z + forwardDir.z * 15));
+        } else if (this.params.car1LightMode === 'downward') {
+            const forwardDir = new THREE.Vector3(Math.sin(this.car1.group.rotation.y), 0, Math.cos(this.car1.group.rotation.y));
+            this.car1.updateHeadlightTarget(new THREE.Vector3(this.car1.getPosition().x + forwardDir.x * 5, -0.2, this.car1.getPosition().z + forwardDir.z * 5));
+        } else if (this.params.car1LightMode === 'custom') {
+            const angleRad = this.params.car1CustomAngle * Math.PI/180;
+            const forwardDir = new THREE.Vector3(Math.sin(this.car1.group.rotation.y), 0, Math.cos(this.car1.group.rotation.y));
+            const dist = 12;
+            this.car1.updateHeadlightTarget(new THREE.Vector3(
+                this.car1.getPosition().x + forwardDir.x * dist * Math.cos(angleRad),
+                0.28 + dist * Math.sin(angleRad),
+                this.car1.getPosition().z + forwardDir.z * dist * Math.cos(angleRad)
+            ));
+        }
+    }
+    
+    _setupGUI() {
+        const gui = new GUI({ title: '🚗 Controls', width: 280 });
+        gui.close();
+        
+        const car1Folder = gui.addFolder('Car 1 (Blue)');
+        car1Folder.add(this.params, 'car1LightMode', ['default','straight','downward','custom']).name('Light Mode').onChange(()=>this._updateCar1LightTarget());
+        car1Folder.add(this.params, 'car1CustomAngle', -30,30,1).name('Custom Angle').onChange(()=>{ if(this.params.car1LightMode==='custom') this._updateCar1LightTarget(); });
+        car1Folder.addColor(this.params, 'car1LightColor').name('Light Color').onChange(()=>this._updateCar1Lighting());
+        car1Folder.add(this.params, 'car1IntensityMult', 0.3,1.5,0.01).name('Intensity Mult').onChange(()=>this._updateCar1Lighting());
+        car1Folder.add(this.params, 'car1ConeDeg', 20,80,1).name('Cone Angle').onChange(()=>this._updateCar1Lighting());
+        car1Folder.add(this.params, 'car1Speed', 1.0,10.0,0.1).name('Speed (max 10)').onChange(v=>this.car1Speed=v);
+        car1Folder.add(this.params, 'car1Radius', 2.5,5.5,0.1).name('Patrol Radius').onChange(v=>{ this.radius1=v; this.waypoints1=[{x:-v,z:-v},{x:-v,z:v},{x:v,z:v},{x:v,z:-v}]; this._resetCar1Position(); });
+        car1Folder.add(this.params, 'resetCar1').name('Reset Position');
+        car1Folder.open();
+        
+        const car2Folder = gui.addFolder('Car 2 (Red) - Smooth Drift');
+        car2Folder.addColor(this.params, 'car2LightColor').name('Light Color').onChange(c=>this.car2.setHeadlightColor(new THREE.Color(c)));
+        car2Folder.add(this.params, 'car2Speed', 1.0,20.0,0.1).name('Speed (max 20)').onChange(v=>this.patrolManager2.setSpeed(v));
+        car2Folder.add(this.params, 'car2RotationSpeed', 2.0,8.0,0.1).name('Steering Speed').onChange(v=>this.patrolManager2.rotationSpeed=v);
+        car2Folder.open();
+        
+        const lampFolder = gui.addFolder('Street Lamps');
+        lampFolder.addColor(this.params, 'masterLampColor').name('Master Color').onChange(c=>this.lamps.forEach(l=>l.setColor(new THREE.Color(c).getHex())));
+        lampFolder.add(this.params, 'masterLampIntensity', 0,1.2,0.01).name('Master Intensity').onChange(v=>this.lamps.forEach(l=>l.setIntensity(v)));
+        lampFolder.add(this.params, 'allLampsOn').name('All ON');
+        lampFolder.add(this.params, 'allLampsOff').name('All OFF');
+        lampFolder.open();
+    }
+    
+    _setupPauseButton() {
+        const btn = document.getElementById('pauseToggleBtn');
+        let paused = false;
+        btn.addEventListener('click', () => {
+            paused = !paused;
+            this.car1Enabled = !paused;
+            this.patrolManager2.enabled = !paused;
+            btn.textContent = paused ? '▶️ Resume' : '⏸️ Pause';
+        });
+    }
+    
+    _animateParticles(time) {
+        const t = time * 0.0015;
+        this.glowParticles.forEach((p, idx) => {
+            const rad = t * 1.5 + idx;
+            const r = 0.7;
+            p.position.x = Math.cos(rad)*r;
+            p.position.z = Math.sin(rad)*r;
+            p.position.y = 0.3 + Math.sin(rad*2)*0.2;
+        });
+        if (this.stars) this.stars.rotation.y += 0.0005;
+    }
+    
+    _animate() {
+        const now = performance.now();
+        let deltaTime = Math.min(0.033, (now - this.lastTime) / 1000);
+        if (deltaTime <= 0) deltaTime = 0.016;
+        this.lastTime = now;
+        
+        this._updateCar1Movement(deltaTime);
+        this.patrolManager2.update(deltaTime);
+        
+        this._updateCar1Lighting();
+        this._updateCar1LightTarget();
+        
+        const car2Pos = this.car2.getPosition();
+        const car2Forward = new THREE.Vector3(Math.sin(this.car2.group.rotation.y), 0, Math.cos(this.car2.group.rotation.y));
+        this.car2.updateHeadlightTarget(new THREE.Vector3(car2Pos.x + car2Forward.x * 12, 0.28, car2Pos.z + car2Forward.z * 12));
+        this.car2.setHeadlightIntensity(0.85);
+        
+        this._animateParticles(now);
+        this.controls.update();
+        this.composer.render();
+        requestAnimationFrame(() => this._animate());
+    }
+}
+
+window.addEventListener('load', () => { new SceneManager(); });
+</script>
+</body>
+</html>
