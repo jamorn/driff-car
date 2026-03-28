@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <title>Two Cars - Ultra Performance Mode (Oppo A60 optimized)</title>
+    <title>Two Cars - Day/Night Mode + Ultra Performance</title>
     <style>
         body {
             margin: 0;
@@ -26,10 +26,15 @@
             backdrop-filter: blur(4px);
             white-space: nowrap;
         }
-        .pause-btn {
+        .control-buttons {
             position: absolute;
             bottom: 20px;
             right: 20px;
+            display: flex;
+            gap: 12px;
+            z-index: 20;
+        }
+        .pause-btn, .daylight-btn {
             background: rgba(0,0,0,0.7);
             color: #ffaa66;
             border: 1px solid #ffaa66;
@@ -39,20 +44,20 @@
             font-size: 14px;
             font-weight: bold;
             cursor: pointer;
-            z-index: 20;
             backdrop-filter: blur(4px);
             transition: 0.2s;
             pointer-events: auto;
             touch-action: manipulation;
         }
-        .pause-btn:hover {
+        .pause-btn:hover, .daylight-btn:hover {
             background: #ffaa66;
             color: #1e1e2a;
             border-color: #fff;
         }
         @media (max-width: 600px) {
             .developer-info { font-size: 9px; top: 8px; left: 8px; padding: 4px 8px; }
-            .pause-btn { padding: 6px 12px; font-size: 12px; bottom: 12px; right: 12px; }
+            .pause-btn, .daylight-btn { padding: 6px 12px; font-size: 12px; }
+            .control-buttons { gap: 8px; bottom: 12px; right: 12px; }
         }
         .controls-note {
             position: absolute;
@@ -77,7 +82,10 @@
 <div class="developer-info">
     👨‍💻 Developer: likit_se@irc.co.th
 </div>
-<button id="pauseToggleBtn" class="pause-btn">⏸️ Pause</button>
+<div class="control-buttons">
+    <button id="daylightToggleBtn" class="daylight-btn">☀️ Daylight</button>
+    <button id="pauseToggleBtn" class="pause-btn">⏸️ Pause</button>
+</div>
 <div class="controls-note">
     🖱️ Drag / touch to rotate | GUI: top-right
 </div>
@@ -112,12 +120,10 @@ function setStoredMode(mode) {
     } catch(e) {}
 }
 
-// Heuristics for low-end devices (Oppo A60 etc.)
 function isLowEndDevice() {
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     const cores = navigator.hardwareConcurrency || 2;
     const lowMemory = ('deviceMemory' in navigator) ? navigator.deviceMemory < 4 : false;
-    // Also check for common low-end GPU keywords
     let lowGPU = false;
     const canvas = document.createElement('canvas');
     const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
@@ -131,8 +137,7 @@ function isLowEndDevice() {
     return isMobile && (cores <= 4 || lowMemory || lowGPU);
 }
 
-// Determine initial performance mode
-let currentPerformanceMode = 'auto'; // 'auto', 'balanced', 'ultra'
+let currentPerformanceMode = 'auto';
 const stored = getStoredMode();
 if (stored === 'balanced' || stored === 'ultra') {
     currentPerformanceMode = stored;
@@ -142,11 +147,9 @@ if (stored === 'balanced' || stored === 'ultra') {
     currentPerformanceMode = 'auto';
 }
 
-// Actually effective mode after heuristics
 function getEffectiveMode() {
     if (currentPerformanceMode === 'ultra') return 'ultra';
     if (currentPerformanceMode === 'balanced') return 'balanced';
-    // auto: use heuristics
     return isLowEndDevice() ? 'ultra' : 'balanced';
 }
 
@@ -155,7 +158,7 @@ function createHeadlightMaterial(baseColor = 0xffaa66) {
     return new THREE.MeshStandardMaterial({ color: baseColor, emissive: baseColor, emissiveIntensity: 0.9 });
 }
 
-// ==================== WHEEL (simplified for ultra mode) ====================
+// ==================== WHEEL ====================
 function createWheel(radius = 0.32, width = 0.45, simplified = false) {
     const group = new THREE.Group();
     const rimMat = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.7, roughness: 0.3 });
@@ -164,7 +167,6 @@ function createWheel(radius = 0.32, width = 0.45, simplified = false) {
     group.add(rim);
     
     if (!simplified) {
-        // patterned slices (cake slice)
         const segments = 16;
         const sliceMatWhite = new THREE.MeshStandardMaterial({ color: 0xeeeeee, metalness: 0.2 });
         const sliceMatBlack = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.4 });
@@ -187,13 +189,13 @@ function createWheel(radius = 0.32, width = 0.45, simplified = false) {
     return group;
 }
 
-// ==================== STREET LAMP (with optional intensity reduction) ====================
+// ==================== STREET LAMP ====================
 class StreetLamp {
     constructor(x, z, color = 0xffaa66, intensity = 0.45, ultraMode = false) {
         this.x = x;
         this.z = z;
         this.color = color;
-        this.intensity = ultraMode ? 0.1 : intensity; // much dimmer in ultra
+        this.intensity = ultraMode ? 0.1 : intensity;
         this.isOn = true;
         this.group = new THREE.Group();
         this.pointLight = null;
@@ -241,7 +243,7 @@ class StreetLamp {
     }
 }
 
-// ==================== CAR CLASS (with ultra mode support) ====================
+// ==================== CAR CLASS ====================
 class Car {
     constructor(color, position, name = "Car", ultraMode = false) {
         this.color = color;
@@ -394,9 +396,23 @@ class Car {
     }
     
     getPosition() { return this.group.position; }
+    
+    // Day/night helpers
+    setLightsActive(active) {
+        const intensity = active ? 0.95 : 0;
+        this.leftSpot.intensity = intensity;
+        this.rightSpot.intensity = intensity;
+        this.fillLight.intensity = active ? 0.6 : 0;
+        this.glowLeft.intensity = active ? 0.4 : 0;
+        this.glowRight.intensity = active ? 0.4 : 0;
+        if (this.leftHeadLens) {
+            this.leftHeadLens.material.emissiveIntensity = active ? 0.9 : 0;
+            this.rightHeadLens.material.emissiveIntensity = active ? 0.9 : 0;
+        }
+    }
 }
 
-// ==================== OBSTACLE (simplified for ultra) ====================
+// ==================== OBSTACLE ====================
 class Obstacle {
     constructor(ultraMode = false) {
         this.group = new THREE.Group();
@@ -433,7 +449,7 @@ class Obstacle {
     getPosition() { return new THREE.Vector3(0, 0, 0); }
 }
 
-// ==================== DRIFT PATROL (same as before) ====================
+// ==================== DRIFT PATROL ====================
 class DriftPatrolSmooth {
     constructor(car, waypoints, loop = true) {
         this.car = car;
@@ -550,6 +566,9 @@ class SceneManager {
         this.car1Enabled = true;
         this.car2Enabled = true;
         
+        // Day/Night state - default is DAYLIGHT
+        this.isDayMode = true;
+        
         this.params = {
             car1LightMode: 'default',
             car1CustomAngle: 0,
@@ -566,12 +585,13 @@ class SceneManager {
             allLampsOn: () => this.lamps.forEach(l => l.setOn(true)),
             allLampsOff: () => this.lamps.forEach(l => l.setOn(false)),
             resetCar1: () => this._resetCar1Position(),
-            performanceMode: currentPerformanceMode, // 'auto', 'balanced', 'ultra'
+            performanceMode: currentPerformanceMode,
         };
         
         this._init();
         this._setupGUI();
-        this._setupPauseButton();
+        this._setupButtons();
+        this._applyDaylightMode(true); // initial daylight
         this._animate();
     }
     
@@ -582,8 +602,8 @@ class SceneManager {
     
     _init() {
         this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0x050b1a);
-        this.scene.fog = this.ultraMode ? null : new THREE.FogExp2(0x050b1a, 0.008);
+        this.scene.background = new THREE.Color(0x87CEEB); // daylight sky initially
+        this.scene.fog = this.ultraMode ? null : new THREE.FogExp2(0x87CEEB, 0.008);
         
         this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, this.ultraMode ? 300 : 1000);
         this.camera.position.set(13, 9, 15);
@@ -591,7 +611,6 @@ class SceneManager {
         
         this.renderer = new THREE.WebGLRenderer({ antialias: !this.ultraMode });
         this.renderer.setSize(window.innerWidth, window.innerHeight);
-        // Force pixel ratio to 1 in ultra mode
         const pixelRatio = this.ultraMode ? 1 : window.devicePixelRatio;
         this.renderer.setPixelRatio(pixelRatio);
         this.renderer.shadowMap.enabled = !this.ultraMode;
@@ -600,7 +619,6 @@ class SceneManager {
         this.renderer.toneMappingExposure = 1.2;
         document.body.appendChild(this.renderer.domElement);
         
-        // Composer and bloom
         const renderPass = new RenderPass(this.scene, this.camera);
         if (!this.ultraMode) {
             this.bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.2, 0.3, 0.2);
@@ -608,7 +626,6 @@ class SceneManager {
             this.composer.addPass(renderPass);
             this.composer.addPass(this.bloomPass);
         } else {
-            // no bloom, just render directly
             this.composer = null;
         }
         
@@ -618,16 +635,15 @@ class SceneManager {
         this.controls.target.set(0, 0.8, 0);
         
         // Ground
-        const groundMat = new THREE.MeshStandardMaterial({ color: 0x111822, roughness: 0.7 });
+        const groundMat = new THREE.MeshStandardMaterial({ color: 0x8B9A6E, roughness: 0.7 }); // grass-like in daylight
         const ground = new THREE.Mesh(new THREE.PlaneGeometry(32, 32), groundMat);
         ground.rotation.x = -Math.PI/2;
         ground.position.y = -0.25;
         ground.receiveShadow = !this.ultraMode;
         this.scene.add(ground);
         
-        // Grid helper: simpler in ultra
+        // Grid helper (simpler in ultra)
         if (this.ultraMode) {
-            // Simple grid lines (fewer lines)
             const gridHelper = new THREE.GridHelper(36, 12, 0x88aaff, 0x335588);
             gridHelper.position.y = -0.2;
             gridHelper.material.transparent = true;
@@ -641,11 +657,21 @@ class SceneManager {
             this.scene.add(gridHelper);
         }
         
-        const ambient = new THREE.AmbientLight(0x22223b, 0.45);
-        this.scene.add(ambient);
+        // Ambient light (will be adjusted by day/night)
+        this.ambientLight = new THREE.AmbientLight(0x404060, 0.8);
+        this.scene.add(this.ambientLight);
+        // Directional light for sun (daytime)
+        this.sunLight = new THREE.DirectionalLight(0xfff5e6, 1.2);
+        this.sunLight.position.set(10, 20, 5);
+        this.sunLight.castShadow = !this.ultraMode;
+        this.sunLight.shadow.mapSize.width = 1024;
+        this.sunLight.shadow.mapSize.height = 1024;
+        this.scene.add(this.sunLight);
+        
         const backFill = new THREE.PointLight(0x4466aa, 0.5);
         backFill.position.set(-2, 3, -5);
         this.scene.add(backFill);
+        this.extraFillLight = backFill;
         
         // Obstacle
         this.obstacle = new Obstacle(this.ultraMode);
@@ -664,7 +690,7 @@ class SceneManager {
             }
         }
         
-        // Street Lamps (reduce intensity and maybe number in ultra)
+        // Street Lamps
         const lampPositions = [
             { x: -7.5, z: -6.0 }, { x: -7.5, z: 0 }, { x: -7.5, z: 6.0 },
             { x: 7.5, z: -6.0 }, { x: 7.5, z: 0 }, { x: 7.5, z: 6.0 }
@@ -675,7 +701,7 @@ class SceneManager {
             this.lamps.push(lamp);
         });
         
-        // Stars (simpler in ultra)
+        // Stars
         const starCount = this.ultraMode ? 200 : 800;
         const starGeo = new THREE.BufferGeometry();
         const starPos = new Float32Array(starCount * 3);
@@ -704,7 +730,6 @@ class SceneManager {
         this.patrolManager2.setSpeed(11.0);
         this.patrolManager2.enabled = true;
         
-        // Path markers (skip in ultra)
         if (!this.ultraMode) {
             this._addPathMarkers(this.waypoints1, 0x3a6ea5, 0.15);
             this._addPathMarkers(waypoints2, 0xcc5555, 0.12);
@@ -759,11 +784,16 @@ class SceneManager {
         }
         let intensity = 0.95 * distanceFactor;
         if (this.params.car1LightMode === 'custom') intensity *= this.params.car1IntensityMult;
-        this.car1.setHeadlightIntensity(intensity);
+        // Only apply intensity if not in daylight mode (daylight overrides)
+        if (!this.isDayMode) {
+            this.car1.setHeadlightIntensity(intensity);
+        } else {
+            this.car1.setHeadlightIntensity(0);
+        }
         const headEmit = 0.5 + distanceFactor * 0.8;
         if (this.car1.leftHeadLens) {
-            this.car1.leftHeadLens.material.emissiveIntensity = headEmit;
-            this.car1.rightHeadLens.material.emissiveIntensity = headEmit;
+            this.car1.leftHeadLens.material.emissiveIntensity = this.isDayMode ? 0 : headEmit;
+            this.car1.rightHeadLens.material.emissiveIntensity = this.isDayMode ? 0 : headEmit;
         }
     }
     
@@ -815,29 +845,77 @@ class SceneManager {
         lampFolder.add(this.params, 'allLampsOff').name('All OFF');
         lampFolder.open();
         
-        // Performance mode selector
         const perfFolder = gui.addFolder('Performance');
         const modeOptions = { 'Auto': 'auto', 'Balanced': 'balanced', 'Ultra (low-end)': 'ultra' };
         perfFolder.add(this.params, 'performanceMode', modeOptions).name('Performance Mode').onChange(val => {
             if (val !== currentPerformanceMode) {
                 currentPerformanceMode = val;
                 setStoredMode(val);
-                // Reload page to apply new settings
                 window.location.reload();
             }
         });
         perfFolder.open();
     }
     
-    _setupPauseButton() {
-        const btn = document.getElementById('pauseToggleBtn');
+    _setupButtons() {
+        const pauseBtn = document.getElementById('pauseToggleBtn');
+        const daylightBtn = document.getElementById('daylightToggleBtn');
         let paused = false;
-        btn.addEventListener('click', () => {
+        pauseBtn.addEventListener('click', () => {
             paused = !paused;
             this.car1Enabled = !paused;
             this.patrolManager2.enabled = !paused;
-            btn.textContent = paused ? '▶️ Resume' : '⏸️ Pause';
+            pauseBtn.textContent = paused ? '▶️ Resume' : '⏸️ Pause';
         });
+        daylightBtn.addEventListener('click', () => {
+            this.isDayMode = !this.isDayMode;
+            this._applyDaylightMode(this.isDayMode);
+            daylightBtn.textContent = this.isDayMode ? '☀️ Daylight' : '🌙 Night';
+        });
+    }
+    
+    _applyDaylightMode(isDay) {
+        // Background and fog
+        if (isDay) {
+            this.scene.background.setHex(0x87CEEB);
+            if (this.scene.fog) this.scene.fog.color.setHex(0x87CEEB);
+        } else {
+            this.scene.background.setHex(0x050b1a);
+            if (this.scene.fog) this.scene.fog.color.setHex(0x050b1a);
+        }
+        
+        // Ambient and directional light
+        this.ambientLight.intensity = isDay ? 0.7 : 0.25;
+        this.sunLight.intensity = isDay ? 1.2 : 0;
+        this.extraFillLight.intensity = isDay ? 0 : 0.5;
+        
+        // Street lamps
+        this.lamps.forEach(lamp => {
+            lamp.setOn(!isDay);
+        });
+        
+        // Car lights
+        if (isDay) {
+            this.car1.setLightsActive(false);
+            this.car2.setLightsActive(false);
+        } else {
+            // Restore dynamic intensity for car1 based on distance to obstacle
+            this._updateCar1Lighting();
+            // Car2 fixed intensity at night
+            this.car2.setLightsActive(true);
+            this.car2.setHeadlightIntensity(0.85);
+        }
+        
+        // Ground color (optional)
+        const groundMesh = this.scene.children.find(c => c.isMesh && c.geometry.type === 'PlaneGeometry');
+        if (groundMesh) {
+            groundMesh.material.color.setHex(isDay ? 0x8B9A6E : 0x111822);
+        }
+        
+        // Bloom strength (optional: disable bloom in daylight to reduce load)
+        if (this.bloomPass) {
+            this.bloomPass.strength = isDay ? 0.2 : 1.2;
+        }
     }
     
     _animateParticles(time) {
@@ -868,7 +946,9 @@ class SceneManager {
         const car2Pos = this.car2.getPosition();
         const car2Forward = new THREE.Vector3(Math.sin(this.car2.group.rotation.y), 0, Math.cos(this.car2.group.rotation.y));
         this.car2.updateHeadlightTarget(new THREE.Vector3(car2Pos.x + car2Forward.x * 12, 0.28, car2Pos.z + car2Forward.z * 12));
-        this.car2.setHeadlightIntensity(0.85);
+        if (!this.isDayMode) {
+            this.car2.setHeadlightIntensity(0.85);
+        }
         
         this._animateParticles(now);
         this.controls.update();
